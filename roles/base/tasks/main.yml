@@ -1,0 +1,209 @@
+---
+# roles/base/tasks/main.yml
+# Base VPS setup: OS validation, dependencies, kernel MPTCP, firewall, SSH hardening
+
+# --- OS Validation ---
+- name: Gather OS facts
+  ansible.builtin.setup:
+    gather_subset:
+      - distribution
+      - kernel
+
+- name: Verify supported OS
+  ansible.builtin.assert:
+    that:
+      - ansible_distribution in ['Ubuntu', 'Debian']
+      - (ansible_distribution == 'Ubuntu' and ansible_distribution_version is version('22.04', '>=')) or
+        (ansible_distribution == 'Debian' and ansible_distribution_major_version is version('12', '>='))
+    fail_msg: >
+      Unsupported OS: {{ ansible_distribution }} {{ ansible_distribution_version }}.
+      This playbook requires Ubuntu 22.04+ or Debian 12+.
+
+- name: Verify kernel version supports MPTCP (5.6+)
+  ansible.builtin.assert:
+    that:
+      - ansible_kernel is version('5.6', '>=')
+    fail_msg: >
+      Kernel {{ ansible_kernel }} does not support upstream MPTCP.
+      Kernel 5.6+ is required. Please upgrade your kernel.
+
+# --- System Updates & Dependencies ---
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: yes
+    cache_valid_time: 3600
+
+- name: Install base dependencies
+  ansible.builtin.apt:
+    name:
+      - curl
+      - wget
+      - iptables
+      - ufw
+      - net-tools
+      - iproute2
+      - jq
+    state: present
+
+# --- MPTCP Kernel Configuration ---
+- name: Enable MPTCP in kernel
+  ansible.posix.sysctl:
+    name: net.mptcp.enabled
+    value: '1'
+    sysctl_file: /etc/sysctl.d/90-mptcp.conf
+    reload: yes
+
+- name: Allow MPTCP join on initial address and port
+  ansible.posix.sysctl:
+    name: net.mptcp.allow_join_initial_addr_port
+    value: '1'
+    sysctl_file: /etc/sysctl.d/90-mptcp.conf
+    reload: yes
+
+- name: Enable IPv4 forwarding
+  ansible.posix.sysctl:
+    name: net.ipv4.ip_forward
+    value: '1'
+    sysctl_file: /etc/sysctl.d/90-mptcp.conf
+    reload: yes
+
+- name: Set MPTCP subflow limits
+  ansible.builtin.command:
+    cmd: ip mptcp limits set subflow {{ mptcp_max_subflows }} add_addr_accepted {{ mptcp_max_add_addr_accepted }}
+  changed_when: true
+
+# --- Persist MPTCP limits on boot ---
+- name: Create MPTCP limits systemd service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/mptcp-limits.service
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=Set MPTCP subflow limits
+      After=network.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/sbin/ip mptcp limits set subflow {{ mptcp_max_subflows }} add_addr_accepted {{ mptcp_max_add_addr_accepted }}
+      RemainAfterExit=yes
+
+      [Install]
+      WantedBy=multi-user.target
+  notify: reload systemd
+
+- name: Enable MPTCP limits service
+  ansible.builtin.systemd:
+    name: mptcp-limits
+    enabled: yes
+    state: started
+    daemon_reload: yes
+
+# --- Data Directory ---
+- name: Create MPTCP data directory
+  ansible.builtin.file:
+    path: "{{ mptcp_data_dir }}"
+    state: directory
+    mode: '0755'
+
+# --- Firewall (UFW) --- only when firewall_manage is true ---
+- name: Firewall - skipping (firewall_manage=false)
+  ansible.builtin.debug:
+    msg: >
+      Firewall management is disabled (firewall_manage=false).
+      MPTCP ports {{ shadowsocks_port }} and {{ glorytun_port }} must be opened manually
+      if you have a firewall configured.
+  when: not (firewall_manage | default(false) | bool)
+
+- name: Allow SSH through firewall
+  community.general.ufw:
+    rule: allow
+    port: "{{ ssh_port }}"
+    proto: tcp
+  when: firewall_manage | default(false) | bool
+
+- name: Allow Shadowsocks port through firewall
+  community.general.ufw:
+    rule: allow
+    port: "{{ shadowsocks_port }}"
+    proto: tcp
+  when: firewall_manage | default(false) | bool
+
+- name: Allow Glorytun port through firewall (TCP)
+  community.general.ufw:
+    rule: allow
+    port: "{{ glorytun_port }}"
+    proto: tcp
+  when: firewall_manage | default(false) | bool and glorytun_enabled | default(true) | bool
+
+- name: Allow Glorytun port through firewall (UDP)
+  community.general.ufw:
+    rule: allow
+    port: "{{ glorytun_port }}"
+    proto: udp
+  when: firewall_manage | default(false) | bool and glorytun_enabled | default(true) | bool
+
+- name: Allow extra firewall ports
+  community.general.ufw:
+    rule: allow
+    port: "{{ item }}"
+  loop: "{{ firewall_extra_ports }}"
+  when: firewall_manage | default(false) | bool and firewall_extra_ports | length > 0
+
+- name: Enable UFW with default deny incoming
+  community.general.ufw:
+    state: enabled
+    default: deny
+    direction: incoming
+  when: firewall_manage | default(false) | bool
+
+- name: Set UFW default allow outgoing
+  community.general.ufw:
+    default: allow
+    direction: outgoing
+  when: firewall_manage | default(false) | bool
+
+# --- SSH Hardening --- only when ssh_hardening_enabled is true ---
+- name: SSH hardening - skipping (ssh_hardening_enabled=false)
+  ansible.builtin.debug:
+    msg: >
+      SSH hardening is disabled (ssh_hardening_enabled=false).
+      Set ssh_hardening_enabled=true in group_vars/all.yml to harden SSH.
+      Make sure you have key-based access configured first.
+  when: not (ssh_hardening_enabled | default(false) | bool)
+
+- name: Configure SSH - disable password authentication
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?PasswordAuthentication'
+    line: "PasswordAuthentication {{ ssh_password_auth }}"
+    validate: 'sshd -t -f %s'
+  notify: restart sshd
+  when: ssh_hardening_enabled | default(false) | bool
+
+- name: Configure SSH - set PermitRootLogin
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?PermitRootLogin'
+    line: "PermitRootLogin {{ ssh_permit_root_login }}"
+    validate: 'sshd -t -f %s'
+  notify: restart sshd
+  when: ssh_hardening_enabled | default(false) | bool
+
+- name: Configure SSH - set port
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?Port '
+    line: "Port {{ ssh_port }}"
+    validate: 'sshd -t -f %s'
+  notify: restart sshd
+  when: ssh_hardening_enabled | default(false) | bool
+
+- name: Print base setup summary
+  ansible.builtin.debug:
+    msg: |
+      Base VPS setup complete:
+        OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+        Kernel: {{ ansible_kernel }}
+        MPTCP: enabled (max {{ mptcp_max_subflows }} subflows)
+        Firewall: {{ 'UFW active (managed)' if firewall_manage | default(false) | bool else 'NOT MANAGED — open ports ' ~ shadowsocks_port ~ ', ' ~ glorytun_port ~ ' manually if needed' }}
+        SSH hardening: {{ 'ENABLED (port ' ~ ssh_port ~ ', root login=' ~ ssh_permit_root_login ~ ')' if ssh_hardening_enabled | default(false) | bool else 'DISABLED (no changes to sshd_config)' }}

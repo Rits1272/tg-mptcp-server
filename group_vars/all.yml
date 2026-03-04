@@ -1,0 +1,58 @@
+# --- VPS Connection ---
+vps_ip: "YOUR_VPS_IP"
+
+# --- MPTCP Configuration ---
+# Maximum number of MPTCP subflows (one per gateway connection from router)
+mptcp_max_subflows: 8
+# Maximum additional addresses accepted from clients
+mptcp_max_add_addr_accepted: 8
+
+# --- Shadowsocks Configuration ---
+# Port for shadowsocks-libev MPTCP proxy (TCP traffic aggregation)
+shadowsocks_port: 65101
+# Encryption method (chacha20-ietf-poly1305 recommended for security + performance)
+shadowsocks_method: "chacha20-ietf-poly1305"
+# Password for shadowsocks authentication (CHANGE THIS)
+shadowsocks_password: "CHANGE_ME_to_a_strong_password"
+# Timeout in seconds for idle connections (600 matches OpenMPTCProuter default)
+shadowsocks_timeout: 600
+
+# --- Glorytun Configuration ---
+# Enable glorytun for UDP/ICMP traffic tunneling
+glorytun_enabled: true
+# Port for glorytun tunnel
+glorytun_port: 65001
+# Glorytun secret key (CHANGE THIS - generate with: glorytun keygen)
+glorytun_key: "CHANGE_ME_generate_with_glorytun_keygen"
+# Tunnel network - IPs match OpenMPTCProuter client defaults so routers
+# connect without needing to change their glorytun localip/remoteip settings
+glorytun_server_ip: "10.255.255.1"
+glorytun_client_ip: "10.255.255.2"
+glorytun_netmask: "255.255.255.252"
+
+# --- Firewall (UFW) ---
+# Set to true to enable UFW and manage firewall rules.
+# WARNING: If false (default), firewall is left untouched — you manage it yourself.
+# If true, UFW will be enabled with default-deny incoming and only the ports
+# listed below will be allowed. Make sure to add ALL ports your VPS needs
+# (e.g., 80, 443 for Traefik, Cashu mint ports, etc.) to firewall_extra_ports.
+firewall_manage: false
+# Additional ports to allow through the firewall (only used if firewall_manage=true)
+# Example: ["80", "443", "3338"]
+firewall_extra_ports: []
+
+# --- SSH Hardening ---
+# Set to true to apply SSH hardening (disable password auth, restrict root login).
+# WARNING: If true, password-based SSH will be disabled. Make sure you have
+# key-based SSH access configured BEFORE enabling this.
+ssh_hardening_enabled: false
+ssh_port: 22
+ssh_permit_root_login: "prohibit-password"
+ssh_password_auth: "no"
+
+# --- NAT / Forwarding ---
+# Network interface for outbound traffic (auto-detected if empty)
+nat_interface: ""
+
+# --- Data Directory ---
+mptcp_data_dir: "/opt/tollgate/mptcp"

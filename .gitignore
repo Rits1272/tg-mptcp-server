@@ -1,0 +1,19 @@
+# Secrets and credentials
+*.vault.yml
+vault.yml
+secrets.yml
+.env
+
+# Ansible retry files
+*.retry
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+*.swp
+*.swo
+*~
+.idea/
+.vscode/

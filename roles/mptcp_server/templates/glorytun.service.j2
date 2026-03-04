@@ -1,0 +1,14 @@
+[Unit]
+Description=Glorytun UDP Tunnel Server
+After=network.target
+
+[Service]
+Type=simple
+# glorytun bind syntax: bind IPADDR PORT [dev NAME] [keyfile FILE] [chacha] [persist]
+ExecStart={{ glorytun_path.stdout }} bind :: {{ glorytun_port }} dev tun-tollgate keyfile {{ mptcp_data_dir }}/glorytun.key
+ExecStartPost=/bin/sh -c 'sleep 2 && ip addr add {{ glorytun_server_ip }}/30 dev tun-tollgate 2>/dev/null || true && ip link set tun-tollgate up'
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

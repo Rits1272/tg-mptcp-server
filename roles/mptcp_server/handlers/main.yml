@@ -1,0 +1,21 @@
+---
+- name: restart shadowsocks
+  ansible.builtin.systemd:
+    name: shadowsocks-libev-server@config
+    state: restarted
+    daemon_reload: yes
+
+- name: restart glorytun
+  ansible.builtin.systemd:
+    name: glorytun-server
+    state: restarted
+    daemon_reload: yes
+
+- name: reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: yes
+
+- name: save iptables
+  ansible.builtin.shell:
+    cmd: iptables-save > /etc/iptables/rules.v4
+  changed_when: true

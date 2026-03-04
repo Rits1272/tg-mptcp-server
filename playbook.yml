@@ -1,0 +1,18 @@
+---
+# TollGate MPTCP Server Playbook
+# Deploys an MPTCP aggregation endpoint on a VPS so TollGate routers
+# can bond multiple WiFi gateway connections for faster internet.
+
+- name: Deploy TollGate MPTCP Server
+  hosts: mptcp-vps
+  become: true
+
+  roles:
+    - role: base
+      tags: [setup]
+
+    - role: mptcp_server
+      tags: [setup, mptcp]
+
+    - role: health
+      tags: [setup, health, verify]

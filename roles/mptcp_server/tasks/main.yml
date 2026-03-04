@@ -1,0 +1,228 @@
+---
+# roles/mptcp_server/tasks/main.yml
+# Deploy MPTCP-aware proxy server: shadowsocks-libev + glorytun
+
+# --- Shadowsocks (TCP aggregation via MPTCP) ---
+- name: Install shadowsocks-libev
+  ansible.builtin.apt:
+    name: shadowsocks-libev
+    state: present
+
+- name: Install mptcpd (MPTCP daemon and mptcpize tool)
+  ansible.builtin.apt:
+    name: mptcpd
+    state: present
+  register: mptcpd_install
+  ignore_errors: yes
+
+- name: Install mptcpd from backports if needed (Debian 12)
+  ansible.builtin.apt:
+    name: mptcpd
+    state: present
+    default_release: "{{ ansible_distribution_release }}-backports"
+  when: mptcpd_install is failed
+  ignore_errors: yes
+
+- name: Configure shadowsocks-libev server
+  ansible.builtin.template:
+    src: shadowsocks-config.json.j2
+    dest: /etc/shadowsocks-libev/config.json
+    mode: '0644'
+  notify: restart shadowsocks
+
+- name: Create shadowsocks systemd override directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/shadowsocks-libev-server@config.service.d
+    state: directory
+    mode: '0755'
+
+- name: Create shadowsocks systemd override for MPTCP
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/shadowsocks-libev-server@config.service.d/mptcp.conf
+    mode: '0644'
+    content: |
+      [Service]
+      ExecStart=
+      ExecStart=/usr/bin/ss-server -c /etc/shadowsocks-libev/%i.json --mptcp -u
+  notify:
+    - reload systemd
+    - restart shadowsocks
+
+- name: Enable and start shadowsocks-libev server
+  ansible.builtin.systemd:
+    name: shadowsocks-libev-server@config
+    enabled: yes
+    state: started
+    daemon_reload: yes
+
+# --- NAT / Masquerade for forwarding aggregated traffic to the internet ---
+- name: Detect default network interface
+  ansible.builtin.shell:
+    cmd: ip route show default | awk '/default/ {print $5}' | head -1
+  register: detected_interface
+  changed_when: false
+  when: nat_interface == ""
+
+- name: Set effective NAT interface
+  ansible.builtin.set_fact:
+    effective_nat_interface: "{{ nat_interface if nat_interface != '' else detected_interface.stdout }}"
+
+- name: Enable NAT masquerade for outbound traffic
+  ansible.builtin.iptables:
+    table: nat
+    chain: POSTROUTING
+    out_interface: "{{ effective_nat_interface }}"
+    jump: MASQUERADE
+  notify: save iptables
+
+- name: Install iptables-persistent for rule persistence
+  ansible.builtin.apt:
+    name: iptables-persistent
+    state: present
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+
+# --- Glorytun (UDP/ICMP tunnel) ---
+- name: Try installing glorytun from repos
+  ansible.builtin.apt:
+    name: glorytun
+    state: present
+  register: glorytun_apt_install
+  ignore_errors: yes
+  when: glorytun_enabled | default(true) | bool
+
+- name: Install glorytun build dependencies (if not in repos)
+  ansible.builtin.apt:
+    name:
+      - build-essential
+      - pkg-config
+      - libsodium-dev
+      - git
+    state: present
+  when:
+    - glorytun_enabled | default(true) | bool
+    - glorytun_apt_install is failed
+
+- name: Check if glorytun binary already exists
+  ansible.builtin.stat:
+    path: /usr/local/bin/glorytun
+  register: glorytun_binary
+  when:
+    - glorytun_enabled | default(true) | bool
+    - glorytun_apt_install is failed
+
+- name: Clone glorytun source (stable branch with submodules)
+  ansible.builtin.git:
+    repo: https://github.com/angt/glorytun.git
+    dest: /tmp/glorytun-build
+    version: stable
+    recursive: yes
+    force: yes
+  when:
+    - glorytun_enabled | default(true) | bool
+    - glorytun_apt_install is failed
+    - not (glorytun_binary.stat.exists | default(false))
+
+- name: Build and install glorytun from source
+  ansible.builtin.shell:
+    cmd: |
+      cd /tmp/glorytun-build
+      make clean || true
+      make
+      make install
+  when:
+    - glorytun_enabled | default(true) | bool
+    - glorytun_apt_install is failed
+    - not (glorytun_binary.stat.exists | default(false))
+
+- name: Find glorytun binary path
+  ansible.builtin.shell:
+    cmd: which glorytun
+  register: glorytun_path
+  changed_when: false
+  when: glorytun_enabled | default(true) | bool
+
+- name: Check if glorytun key file already exists
+  ansible.builtin.stat:
+    path: "{{ mptcp_data_dir }}/glorytun.key"
+  register: glorytun_key_file
+  when: glorytun_enabled | default(true) | bool
+
+- name: Generate glorytun key file
+  ansible.builtin.shell:
+    cmd: "{{ glorytun_path.stdout }} keygen > {{ mptcp_data_dir }}/glorytun.key"
+  when:
+    - glorytun_enabled | default(true) | bool
+    - not (glorytun_key_file.stat.exists | default(false))
+  notify: restart glorytun
+
+- name: Set glorytun key file permissions
+  ansible.builtin.file:
+    path: "{{ mptcp_data_dir }}/glorytun.key"
+    mode: '0600'
+  when: glorytun_enabled | default(true) | bool
+
+- name: Read glorytun key for config summary
+  ansible.builtin.command:
+    cmd: "cat {{ mptcp_data_dir }}/glorytun.key"
+  register: glorytun_key_content
+  changed_when: false
+  when: glorytun_enabled | default(true) | bool
+
+- name: Create glorytun systemd service
+  ansible.builtin.template:
+    src: glorytun.service.j2
+    dest: /etc/systemd/system/glorytun-server.service
+    mode: '0644'
+  when: glorytun_enabled | default(true) | bool
+  notify:
+    - reload systemd
+    - restart glorytun
+
+- name: Enable and start glorytun
+  ansible.builtin.systemd:
+    name: glorytun-server
+    enabled: yes
+    state: started
+    daemon_reload: yes
+  when: glorytun_enabled | default(true) | bool
+
+# --- Re-apply MPTCP limits (may be reset during package installs) ---
+- name: Re-apply MPTCP subflow limits
+  ansible.builtin.command:
+    cmd: ip mptcp limits set subflow {{ mptcp_max_subflows }} add_addr_accepted {{ mptcp_max_add_addr_accepted }}
+  changed_when: true
+
+# --- Save server config for reference ---
+- name: Save server configuration summary
+  ansible.builtin.copy:
+    dest: "{{ mptcp_data_dir }}/server-config.txt"
+    mode: '0600'
+    content: |
+      # TollGate MPTCP Server Configuration
+      # Generated by Ansible on {{ ansible_date_time.iso8601 }}
+
+      ## Shadowsocks (TCP proxy with MPTCP)
+      Port: {{ shadowsocks_port }}
+      Method: {{ shadowsocks_method }}
+      Password: {{ shadowsocks_password }}
+
+      ## Glorytun (UDP tunnel)
+      Enabled: {{ glorytun_enabled }}
+      Port: {{ glorytun_port }}
+      Server Tunnel IP: {{ glorytun_server_ip }}
+      Client Tunnel IP: {{ glorytun_client_ip }}
+      Key: {{ glorytun_key_content.stdout | default('see /opt/tollgate/mptcp/glorytun.key') }}
+
+      ## MPTCP
+      Max Subflows: {{ mptcp_max_subflows }}
+      NAT Interface: {{ effective_nat_interface }}
+
+- name: Print deployment summary
+  ansible.builtin.debug:
+    msg: |
+      MPTCP server deployed:
+        Shadowsocks: port {{ shadowsocks_port }} (TCP with MPTCP)
+        Glorytun: {{ 'port ' ~ glorytun_port ~ ' (UDP tunnel)' if glorytun_enabled else 'disabled' }}
+        NAT interface: {{ effective_nat_interface }}
+        Config saved to: {{ mptcp_data_dir }}/server-config.txt

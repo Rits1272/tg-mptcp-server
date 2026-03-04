@@ -1,0 +1,112 @@
+---
+# roles/health/tasks/main.yml
+# Verify MPTCP server is running and properly configured
+
+- name: Verify MPTCP is enabled in kernel
+  ansible.builtin.command:
+    cmd: sysctl -n net.mptcp.enabled
+  register: mptcp_enabled
+  changed_when: false
+
+- name: Assert MPTCP is enabled
+  ansible.builtin.assert:
+    that:
+      - mptcp_enabled.stdout | trim == '1'
+    fail_msg: "MPTCP is not enabled in the kernel (net.mptcp.enabled={{ mptcp_enabled.stdout }})"
+
+- name: Verify MPTCP subflow limits
+  ansible.builtin.command:
+    cmd: ip mptcp limits show
+  register: mptcp_limits
+  changed_when: false
+
+- name: Print MPTCP limits
+  ansible.builtin.debug:
+    msg: "MPTCP limits: {{ mptcp_limits.stdout }}"
+
+- name: Verify shadowsocks-libev is running
+  ansible.builtin.systemd:
+    name: shadowsocks-libev-server@config
+    state: started
+  check_mode: yes
+  register: ss_status
+
+- name: Assert shadowsocks is running
+  ansible.builtin.assert:
+    that:
+      - ss_status.status.ActiveState == 'active'
+    fail_msg: "Shadowsocks is not running. Check: systemctl status shadowsocks-libev-server@config"
+
+- name: Verify shadowsocks is listening on expected port
+  ansible.builtin.shell:
+    cmd: ss -tlnp | grep ":{{ shadowsocks_port }}"
+  register: ss_listen
+  changed_when: false
+  failed_when: false
+
+- name: Assert shadowsocks is listening
+  ansible.builtin.assert:
+    that:
+      - ss_listen.rc == 0
+    fail_msg: "Shadowsocks is not listening on port {{ shadowsocks_port }}"
+
+- name: Verify glorytun is running
+  ansible.builtin.systemd:
+    name: glorytun-server
+    state: started
+  check_mode: yes
+  register: gt_status
+  when: glorytun_enabled | default(true) | bool
+
+- name: Assert glorytun is running
+  ansible.builtin.assert:
+    that:
+      - gt_status.status.ActiveState == 'active'
+    fail_msg: "Glorytun is not running. Check: systemctl status glorytun-server"
+  when: glorytun_enabled | default(true) | bool
+
+- name: Verify IP forwarding is enabled
+  ansible.builtin.command:
+    cmd: sysctl -n net.ipv4.ip_forward
+  register: ip_forward
+  changed_when: false
+
+- name: Assert IP forwarding is enabled
+  ansible.builtin.assert:
+    that:
+      - ip_forward.stdout | trim == '1'
+    fail_msg: "IP forwarding is not enabled"
+
+- name: Check NAT masquerade rule exists
+  ansible.builtin.shell:
+    cmd: iptables -t nat -L POSTROUTING -n | grep -i masquerade
+  register: nat_check
+  changed_when: false
+  failed_when: false
+
+- name: Assert NAT masquerade is configured
+  ansible.builtin.assert:
+    that:
+      - nat_check.rc == 0
+    fail_msg: "NAT masquerade rule is not configured"
+
+- name: Verify UFW is active
+  ansible.builtin.command:
+    cmd: ufw status
+  register: ufw_status
+  changed_when: false
+  when: firewall_manage | default(false) | bool
+
+- name: Print health check summary
+  ansible.builtin.debug:
+    msg: |
+      Health Check Results:
+        MPTCP enabled: YES
+        MPTCP limits: {{ mptcp_limits.stdout }}
+        Shadowsocks: RUNNING on port {{ shadowsocks_port }}
+        Glorytun: {{ 'RUNNING on port ' ~ glorytun_port if glorytun_enabled else 'DISABLED' }}
+        IP forwarding: ENABLED
+        NAT masquerade: CONFIGURED
+        Firewall: {{ ('ACTIVE' if 'active' in ufw_status.stdout else 'INACTIVE') if firewall_manage | default(false) | bool else 'NOT MANAGED (firewall_manage=false)' }}
+
+      Server is ready to accept MPTCP connections from TollGate routers.
