@@ -22,8 +22,8 @@ shadowsocks_timeout: 600
 glorytun_enabled: true
 # Port for glorytun tunnel
 glorytun_port: 65001
-# Glorytun secret key (CHANGE THIS - generate with: glorytun keygen)
-glorytun_key: "CHANGE_ME_generate_with_glorytun_keygen"
+# Glorytun key is auto-generated on the VPS during deployment.
+# After deployment, retrieve it with: cat /opt/tollgate/mptcp/server-config.txt
 # Tunnel network - IPs match OpenMPTCProuter client defaults so routers
 # connect without needing to change their glorytun localip/remoteip settings
 glorytun_server_ip: "10.255.255.1"

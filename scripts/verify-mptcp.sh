@@ -45,9 +45,11 @@ ANSIBLE_CMD=(ansible-playbook -i "$PROJECT_DIR/inventory/hosts.yml"
 
 if [ -n "$SSH_PASS" ]; then
     if ! command -v sshpass &>/dev/null; then
-        echo "Error: sshpass not found."
+        echo "Error: sshpass not found. Install with: brew install sshpass (macOS) or apt install sshpass (Linux)"
         exit 1
     fi
+    ANSIBLE_CMD+=("--ask-pass")
+    export ANSIBLE_SSH_PASS="$SSH_PASS"
     export SSHPASS="$SSH_PASS"
     ANSIBLE_CMD=(sshpass -e "${ANSIBLE_CMD[@]}")
 fi

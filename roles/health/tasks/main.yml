@@ -14,6 +14,11 @@
       - mptcp_enabled.stdout | trim == '1'
     fail_msg: "MPTCP is not enabled in the kernel (net.mptcp.enabled={{ mptcp_enabled.stdout }})"
 
+- name: Ensure MPTCP subflow limits are set
+  ansible.builtin.command:
+    cmd: ip mptcp limits set subflow {{ mptcp_max_subflows }} add_addr_accepted {{ mptcp_max_add_addr_accepted }}
+  changed_when: true
+
 - name: Verify MPTCP subflow limits
   ansible.builtin.command:
     cmd: ip mptcp limits show

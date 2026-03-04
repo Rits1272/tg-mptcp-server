@@ -26,8 +26,6 @@ Internet  <-->  VPS  <--+----- Gateway B (another TollGate) +--->  TollGate Rout
 5. Shadowsocks on the VPS forwards that traffic to the internet via standard TCP
 6. Responses flow back the same path, split across the available links
 
-**Why a VPS is needed:** Most internet servers don't support MPTCP. The router can't just enable MPTCP and talk to YouTube directly — YouTube would ignore it. The VPS sits in the middle: the router bonds its multiple slow links to the VPS using MPTCP, and the VPS makes normal TCP connections to destinations on behalf of the router.
-
 ## Prerequisites
 
 ### Local Machine (where you run Ansible)
