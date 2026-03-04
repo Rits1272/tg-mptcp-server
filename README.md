@@ -4,7 +4,7 @@ Ansible-based deployment of an MPTCP proxy server that lets [TollGate](https://g
 
 ## What This Does
 
-TollGate routers use [Crows Nest](https://github.com/OpenTollGate) to scan for and connect to nearby WiFi gateways. Currently, a router can only use one gateway at a time. This project deploys a **server-side MPTCP aggregation endpoint** on a VPS that allows a router to bond multiple gateway connections together for increased bandwidth.
+TollGate routers use [Crows Nest](https://github.com/OpenTollGate/tollgate-module-crowsnest-go) to scan for and connect to nearby WiFi gateways. Currently, a router can only use one gateway at a time. This project deploys a **server-side MPTCP aggregation endpoint** on a VPS that allows a router to bond multiple gateway connections together for increased bandwidth.
 
 The VPS acts as a convergence point: the router sends traffic through multiple slow links using [Multipath TCP](https://www.multipath-tcp.org/), and the VPS reassembles them into a single fast connection before forwarding to the internet. The destination server never needs to know MPTCP is involved.
 
