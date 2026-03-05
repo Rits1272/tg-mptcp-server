@@ -83,6 +83,11 @@ With SSH password:
 ./scripts/verify-mptcp.sh <VPS IP>
 ```
 
+With SSH password:
+```
+./scripts/verify-mptcp.sh -p your-ssh-password <VPS IP>
+```
+
 This runs health checks confirming:
 - MPTCP is enabled in the kernel
 - Shadowsocks is running and listening
